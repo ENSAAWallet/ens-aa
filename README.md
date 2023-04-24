@@ -31,6 +31,8 @@ Obviously, if account abstraction can be organically combined with ENS, then thi
   - When the private key of the Ethereum address is lost, users can choose the private key of the Dogcoin address to continue using the ENSAA account, similar to the idea of the Ethereum client diversity.
 
   - For some high-risk operations on the account, verification can be achieved through multiple signatures of private keys in multiple chains.
+  - According the rule of the `fuse`, you can recover the `ENSAccount` by its parant ens domain. For example,
+    - recover `ENSAccount` of `staff.company.eth` by `company.eth`.
 
   - ENS also records social information (such as Twitter), providing the possibility of introducing social recovery and the keyless account.
 

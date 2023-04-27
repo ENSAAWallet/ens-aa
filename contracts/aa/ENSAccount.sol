@@ -5,17 +5,19 @@ pragma solidity ^0.8.12;
 /* solhint-disable no-inline-assembly */
 /* solhint-disable reason-string */
 
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
-import "@ensdomains/ens-contracts/contracts/resolvers/Resolver.sol";
-import "@ensdomains/ens-contracts/contracts/wrapper/NameWrapper.sol";
+import {Resolver} from "@ensdomains/ens-contracts/contracts/resolvers/Resolver.sol";
+import {INameWrapper, PARENT_CANNOT_CONTROL, CANNOT_UNWRAP, CANNOT_SET_RESOLVER} from "@ensdomains/ens-contracts/contracts/wrapper/INameWrapper.sol";
 
-import "./libraries/Helpers.sol";
-import "./interfaces/IENSAccount.sol";
-import "./abstracts/BaseAccount.sol";
-import "./TokenCallbackHandler.sol";
+import {_packValidationData} from "./libraries/Helpers.sol";
+import {LibCoinType} from "./libraries/CoinType.sol";
+import {LibKeyScore} from "./libraries/KeyScore.sol";
+import {IENSAccount} from "./interfaces/IENSAccount.sol";
+import {BaseAccount, IEntryPoint, UserOperation} from "./abstracts/BaseAccount.sol";
+import {TokenCallbackHandler} from "./TokenCallbackHandler.sol";
 
 contract ENSAccount is
     IENSAccount,
@@ -26,22 +28,32 @@ contract ENSAccount is
 {
     using ECDSA for bytes32;
 
-    uint256 private constant COIN_TYPE_ETH = 60;
+    struct AddressRecord {
+        bytes addr;
+        uint256 score; // score means the priority of the address
+    }
 
-    uint64 public ensExpiry;
-    bytes32 public ensNode;
-    mapping(uint256 => bytes) addresses;
-    NameWrapper public immutable ensNameWrapper;
-    Resolver public immutable ensResolver;
+    struct OwnerRecord {
+        uint256 coinType;
+        bytes addr;
+    }
+
+    bytes32 public node;
+    uint64 public expiry;
+    OwnerRecord public owner;
+    // CoinType => AddressRecord
+    mapping(uint256 => AddressRecord) public addresses;
+    INameWrapper public immutable nameWrapper;
+    Resolver public immutable resolver;
     IEntryPoint private immutable _entryPoint;
 
     event ENSAccountInitialized(
         IEntryPoint indexed entryPoint,
-        Resolver indexed ensResolver,
+        Resolver indexed resolver,
+        INameWrapper nameWrapper,
         bytes32 indexed node,
-        NameWrapper ensNameWrapper,
         address owner,
-        uint64 ensExpiry
+        uint64 expiry
     );
 
     modifier onlyOwner() {
@@ -49,22 +61,27 @@ contract ENSAccount is
         _;
     }
 
+    // solhint-disable-next-line no-empty-blocks
+    receive() external payable {}
+
+    function updateExiry() public returns (uint64) {
+        (, , expiry) = nameWrapper.getData(uint256(node));
+        return expiry;
+    }
+
     /// @inheritdoc BaseAccount
     function entryPoint() public view virtual override returns (IEntryPoint) {
         return _entryPoint;
     }
 
-    // solhint-disable-next-line no-empty-blocks
-    receive() external payable {}
-
     constructor(
-        IEntryPoint anEntryPoint,
-        NameWrapper anEnsNameWrapper,
-        Resolver anEnsResolver
+        IEntryPoint _ep,
+        INameWrapper _nameWrapper,
+        Resolver _resolver
     ) {
-        _entryPoint = anEntryPoint;
-        ensNameWrapper = anEnsNameWrapper;
-        ensResolver = anEnsResolver;
+        _entryPoint = _ep;
+        nameWrapper = _nameWrapper;
+        resolver = _resolver;
         _disableInitializers();
     }
 
@@ -102,17 +119,17 @@ contract ENSAccount is
         }
     }
 
-    function getOwner() public view returns (address owner) {
-        bytes memory a = addresses[COIN_TYPE_ETH];
-        owner = a.length == 0 ? address(0) : _bytesToAddress(a);
+    function getOwner() public view returns (address) {
+        bytes memory addr = owner.addr;
+        return addr.length == 0 ? address(0) : _bytesToAddress(addr);
     }
 
-    function updateNode(uint256 coinType, bytes memory a) external {
+    function updateNode(uint256 coinType, bytes memory addr) external {
         require(
-            msg.sender == address(ensResolver),
+            msg.sender == address(resolver),
             "only allow resolver to update "
         );
-        addresses[coinType] = a;
+        addresses[coinType].addr = addr;
     }
 
     /**
@@ -120,29 +137,40 @@ contract ENSAccount is
      * a new implementation of ENSAccount must be deployed with the new EntryPoint address, then upgrading
      * the implementation by calling `upgradeTo()`
      */
-    function initialize(bytes32 node) public virtual initializer {
-        _initialize(node);
+    function initialize(bytes32 _node) public virtual initializer {
+        _initialize(_node);
     }
 
-    function _initialize(bytes32 node) internal virtual {
-        ensNode = node;
-        (, , uint64 expiry) = ensNameWrapper.getData(uint256(node));
+    function _initialize(bytes32 _node) internal virtual {
+        (, , expiry) = nameWrapper.getData(uint256(_node));
         require(
-            ensNameWrapper.allFusesBurned(
-                node,
+            nameWrapper.allFusesBurned(
+                _node,
                 PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_SET_RESOLVER
             ),
             "fuses restriction"
         );
-        ensExpiry = expiry;
-        addresses[COIN_TYPE_ETH] = ensResolver.addr(node, COIN_TYPE_ETH);
+
+        // only active eth address first
+        bytes memory ethAddr = resolver.addr(_node, LibCoinType.COIN_TYPE_ETH);
+        addresses[LibCoinType.COIN_TYPE_ETH] = AddressRecord({
+            score: 1, // highest score
+            addr: ethAddr
+        });
+
+        owner = OwnerRecord({
+            coinType: LibCoinType.COIN_TYPE_ETH,
+            addr: ethAddr
+        });
+
+        node = _node;
         emit ENSAccountInitialized(
             _entryPoint,
-            ensResolver,
-            node,
-            ensNameWrapper,
-            getOwner(),
-            ensExpiry
+            resolver,
+            nameWrapper,
+            _node,
+            _bytesToAddress(ethAddr),
+            expiry
         );
     }
 
@@ -162,7 +190,7 @@ contract ENSAccount is
         _requireFromEntryPoint();
         validationData = _validateSignature(userOp, userOpHash);
         if (validationData == 0) {
-            validationData = _packValidationData(false, uint48(ensExpiry), 0);
+            validationData = _packValidationData(false, uint48(expiry), 0);
         }
         _validateNonce(userOp.nonce);
         _payPrefund(missingAccountFunds);
@@ -175,8 +203,15 @@ contract ENSAccount is
     ) internal virtual override returns (uint256 validationData) {
         bytes32 hash = userOpHash.toEthSignedMessageHash();
         uint256 mode = getSignMode(userOp.nonce);
-        if (mode == COIN_TYPE_ETH) {
-            if (getOwner() != hash.recover(userOp.signature))
+        if (mode == LibCoinType.COIN_TYPE_ETH) {
+            AddressRecord memory record = addresses[mode];
+            if (
+                record.score == LibKeyScore.DISABLE ||
+                record.score > LibKeyScore.VALIDATION_THREADHOLD
+            ) {
+                revert UnvalidKeyScore(record.score);
+            }
+            if (_bytesToAddress(record.addr) != hash.recover(userOp.signature))
                 return SIG_VALIDATION_FAILED;
             return 0;
         }
@@ -234,9 +269,9 @@ contract ENSAccount is
         }
     }
 
-    function getSignMode(uint256 nonce) public returns (uint256) {
+    function getSignMode(uint256 nonce) public pure returns (uint256) {
         // Use coinType to indicate the sign mode
         // TODO: extend other sign modes (e.g. multi signature of multi coinType)
-        return nonce == 0 ? COIN_TYPE_ETH : (nonce >> 64);
+        return nonce == 0 ? LibCoinType.COIN_TYPE_ETH : (nonce >> 64);
     }
 }

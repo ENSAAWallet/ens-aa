@@ -74,7 +74,9 @@ contract ENSAccountFactory is IENSAccountFactory {
             );
     }
 
-    function getNodeAccount(bytes32 node) external returns (address account) {
+    function getNodeAccount(
+        bytes32 node
+    ) public view returns (address account) {
         account = accountMapping[node];
     }
 }

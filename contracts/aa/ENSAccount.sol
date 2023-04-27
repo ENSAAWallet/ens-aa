@@ -104,7 +104,7 @@ contract ENSAccount is
 
     function getOwner() public view returns (address owner) {
         bytes memory a = addresses[COIN_TYPE_ETH];
-        owner = a.length == 0 ? address(0) : bytesToAddress(a);
+        owner = a.length == 0 ? address(0) : _bytesToAddress(a);
     }
 
     function updateNode(uint256 coinType, bytes memory a) external {
@@ -174,9 +174,13 @@ contract ENSAccount is
         bytes32 userOpHash
     ) internal virtual override returns (uint256 validationData) {
         bytes32 hash = userOpHash.toEthSignedMessageHash();
-        if (getOwner() != hash.recover(userOp.signature))
-            return SIG_VALIDATION_FAILED;
-        return 0;
+        uint256 mode = getSignMode(userOp.nonce);
+        if (mode == COIN_TYPE_ETH) {
+            if (getOwner() != hash.recover(userOp.signature))
+                return SIG_VALIDATION_FAILED;
+            return 0;
+        }
+        revert UnSupportedSignMode(mode);
     }
 
     function _call(address target, uint256 value, bytes memory data) internal {
@@ -221,12 +225,18 @@ contract ENSAccount is
         _onlyOwner();
     }
 
-    function bytesToAddress(
+    function _bytesToAddress(
         bytes memory b
     ) internal pure returns (address payable a) {
         require(b.length == 20);
         assembly {
             a := div(mload(add(b, 32)), exp(256, 12))
         }
+    }
+
+    function getSignMode(uint256 nonce) public returns (uint256) {
+        // Use coinType to indicate the sign mode
+        // TODO: extend other sign modes (e.g. multi signature of multi coinType)
+        return nonce == 0 ? COIN_TYPE_ETH : (nonce >> 64);
     }
 }

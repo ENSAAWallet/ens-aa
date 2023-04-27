@@ -5,6 +5,16 @@
   "repository": "git@github.com:ENSAAWallet/ens-aa.git",
   "author": "doublespending <outofgas@qq.com>",
   "license": "MIT",
+  "scripts": {
+    "clear": "rm -rf dist artifacts cache",
+    "lint": "eslint -f unix .",
+    "lint-fix": "eslint -f unix . --fix",
+    "test": "hardhat test",
+    "compile": "hardhat compile --force",
+    "hardhat-test": "hardhat test",
+    "tsc": "tsc",
+    "watch-tsc": "tsc -w --preserveWatchOutput"
+  },
   "devDependencies": {
     "@ethersproject/abi": "^5.4.7",
     "@ethersproject/providers": "^5.4.7",

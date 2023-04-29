@@ -39,6 +39,7 @@ contract ENSAccount is
     }
 
     bytes32 public node;
+    // The expiry date of the domain, in seconds since the Unix epoch.
     uint64 public expiry;
     OwnerRecord public owner;
     // CoinType => AddressRecord
@@ -189,9 +190,6 @@ contract ENSAccount is
     ) external virtual override returns (uint256 validationData) {
         _requireFromEntryPoint();
         validationData = _validateSignature(userOp, userOpHash);
-        if (validationData == 0) {
-            validationData = _packValidationData(false, uint48(expiry), 0);
-        }
         _validateNonce(userOp.nonce);
         _payPrefund(missingAccountFunds);
     }
@@ -211,9 +209,13 @@ contract ENSAccount is
             ) {
                 revert UnvalidKeyScore(record.score);
             }
-            if (_bytesToAddress(record.addr) != hash.recover(userOp.signature))
-                return SIG_VALIDATION_FAILED;
-            return 0;
+            return
+                _packValidationData(
+                    _bytesToAddress(record.addr) !=
+                        hash.recover(userOp.signature), // sigFailed
+                    uint48(expiry),
+                    0
+                );
         }
         revert UnSupportedSignMode(mode);
     }

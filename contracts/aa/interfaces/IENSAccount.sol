@@ -7,5 +7,7 @@ interface IENSAccount {
 
     function updateExiry() external returns (uint64);
 
-    function updateNode(uint256 coinType, bytes memory addr) external;
+    function updateNode(uint256 coinType, bytes calldata addr) external;
+
+    function migrateCoinType(uint256[] calldata _coinTypes) external;
 }

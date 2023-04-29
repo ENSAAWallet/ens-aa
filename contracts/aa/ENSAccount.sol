@@ -70,6 +70,12 @@ contract ENSAccount is
         return expiry;
     }
 
+    function migrateCoinType(uint256[] calldata _coinTypes) external {
+        for (uint256 i = 0; i < _coinTypes.length; ++i) {
+            addresses[_coinTypes[i]].addr = resolver.addr(node, _coinTypes[i]);
+        }
+    }
+
     /// @inheritdoc BaseAccount
     function entryPoint() public view virtual override returns (IEntryPoint) {
         return _entryPoint;
@@ -125,7 +131,7 @@ contract ENSAccount is
         return addr.length == 0 ? address(0) : _bytesToAddress(addr);
     }
 
-    function updateNode(uint256 coinType, bytes memory addr) external {
+    function updateNode(uint256 coinType, bytes calldata addr) external {
         require(
             msg.sender == address(resolver),
             "only allow resolver to update "

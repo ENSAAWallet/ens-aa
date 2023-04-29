@@ -5,23 +5,24 @@ import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
 import {ENSAccount} from "./ENSAccount.sol";
-import "@ensdomains/ens-contracts/contracts/resolvers/Resolver.sol";
-import "@ensdomains/ens-contracts/contracts/wrapper/NameWrapper.sol";
-import "./interfaces/IENSAccountFactory.sol";
+import {Resolver} from "@ensdomains/ens-contracts/contracts/resolvers/Resolver.sol";
+import {INameWrapper} from "@ensdomains/ens-contracts/contracts/wrapper/INameWrapper.sol";
+import {IENSAccountFactory} from "./interfaces/IENSAccountFactory.sol";
 
 contract ENSAccountFactory is IENSAccountFactory {
     ENSAccount public immutable accountImplementation;
-    mapping(bytes32 => address) public accountMapping;
+    mapping(bytes32 => address) public domain2account;
+    mapping(address => bytes32) public account2domain;
 
     constructor(
         IEntryPoint _entryPoint,
-        NameWrapper _ensNameWrapper,
-        Resolver _ensResolver
+        INameWrapper _nameWrapper,
+        Resolver _resolver
     ) {
         accountImplementation = new ENSAccount(
             _entryPoint,
-            _ensNameWrapper,
-            _ensResolver
+            _nameWrapper,
+            _resolver
         );
     }
 
@@ -35,7 +36,7 @@ contract ENSAccountFactory is IENSAccountFactory {
         bytes32 node,
         uint256 salt
     ) public returns (ENSAccount ret) {
-        require(accountMapping[node] == address(0), "already deployed");
+        require(domain2account[node] == address(0), "already deployed");
         address addr = getAddress(node, salt);
         uint codeSize = addr.code.length;
         if (codeSize > 0) {
@@ -49,7 +50,8 @@ contract ENSAccountFactory is IENSAccountFactory {
                 )
             )
         );
-        accountMapping[node] = address(ret);
+        domain2account[node] = address(ret);
+        account2domain[address(ret)] = node;
     }
 
     /**
@@ -77,6 +79,6 @@ contract ENSAccountFactory is IENSAccountFactory {
     function getNodeAccount(
         bytes32 node
     ) public view returns (address account) {
-        account = accountMapping[node];
+        account = domain2account[node];
     }
 }

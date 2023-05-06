@@ -62,24 +62,30 @@ contract ENSAccount is
         _;
     }
 
+    // Require the function call went through EntryPoint or owner
+    modifier onlyEntryPointOrOwner() {
+        require(
+            msg.sender == address(entryPoint()) || msg.sender == getOwner(),
+            "account: not Owner or EntryPoint"
+        );
+        _;
+    }
+
+    modifier notExpired() {
+        require(block.timestamp <= expire, "expired domain");
+        _;
+    }
+
+    function _onlyOwner() internal view {
+        //directly from EOA owner, or through the account itself (which gets redirected through execute())
+        require(
+            msg.sender == getOwner() || msg.sender == address(this),
+            "only owner"
+        );
+    }
+
     // solhint-disable-next-line no-empty-blocks
     receive() external payable {}
-
-    function updateExiry() public returns (uint64) {
-        (, , expiry) = nameWrapper.getData(uint256(node));
-        return expiry;
-    }
-
-    function migrateCoinType(uint256[] calldata _coinTypes) external {
-        for (uint256 i = 0; i < _coinTypes.length; ++i) {
-            addresses[_coinTypes[i]].addr = resolver.addr(node, _coinTypes[i]);
-        }
-    }
-
-    /// @inheritdoc BaseAccount
-    function entryPoint() public view virtual override returns (IEntryPoint) {
-        return _entryPoint;
-    }
 
     constructor(
         IEntryPoint _ep,
@@ -92,53 +98,6 @@ contract ENSAccount is
         _disableInitializers();
     }
 
-    function _onlyOwner() internal view {
-        //directly from EOA owner, or through the account itself (which gets redirected through execute())
-        require(
-            msg.sender == getOwner() || msg.sender == address(this),
-            "only owner"
-        );
-    }
-
-    /**
-     * execute a transaction (called directly from owner, or by entryPoint)
-     */
-    function execute(
-        address dest,
-        uint256 value,
-        bytes calldata func
-    ) external {
-        _requireFromEntryPointOrOwner();
-        _call(dest, value, func);
-    }
-
-    /**
-     * execute a sequence of transactions
-     */
-    function executeBatch(
-        address[] calldata dest,
-        bytes[] calldata func
-    ) external {
-        _requireFromEntryPointOrOwner();
-        require(dest.length == func.length, "wrong array lengths");
-        for (uint256 i = 0; i < dest.length; i++) {
-            _call(dest[i], 0, func[i]);
-        }
-    }
-
-    function getOwner() public view returns (address) {
-        bytes memory addr = owner.addr;
-        return addr.length == 0 ? address(0) : _bytesToAddress(addr);
-    }
-
-    function updateNode(uint256 coinType, bytes calldata addr) external {
-        require(
-            msg.sender == address(resolver),
-            "only allow resolver to update "
-        );
-        addresses[coinType].addr = addr;
-    }
-
     /**
      * @dev The _entryPoint member is immutable, to reduce gas consumption.  To upgrade EntryPoint,
      * a new implementation of ENSAccount must be deployed with the new EntryPoint address, then upgrading
@@ -148,8 +107,120 @@ contract ENSAccount is
         _initialize(_node);
     }
 
+    /// @inheritdoc BaseAccount
+    function entryPoint() public view virtual override returns (IEntryPoint) {
+        return _entryPoint;
+    }
+
+    function getOwner() public view notExpired returns (address) {
+        bytes memory addr = owner.addr;
+        return addr.length == 0 ? address(0) : _bytesToAddress(addr);
+    }
+
+    function getSignMode(uint256 nonce) public pure returns (uint256) {
+        // Use coinType to indicate the sign mode
+        // TODO: extend other sign modes (e.g. multi signature of multi coinType)
+        return nonce == 0 ? LibCoinType.COIN_TYPE_ETH : (nonce >> 64);
+    }
+
+    function updateExiry() public returns (uint64) {
+        require(
+            nameWrapper.allFusesBurned(
+                node,
+                PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_SET_RESOLVER
+            ),
+            "fuses restriction"
+        );
+        (, , expiry) = nameWrapper.getData(uint256(node));
+        return expiry;
+    }
+
+    /**
+     * check current account deposit in the entryPoint
+     */
+    function getDeposit() public view returns (uint256) {
+        return entryPoint().balanceOf(address(this));
+    }
+
+    /**
+     * deposit more funds for this account in the entryPoint
+     */
+    function addDeposit() public payable {
+        entryPoint().depositTo{value: msg.value}(address(this));
+    }
+
+    /**
+     * withdraw value from the account's deposit
+     * @param withdrawAddress target to send to
+     * @param amount to withdraw
+     */
+    function withdrawDepositTo(
+        address payable withdrawAddress,
+        uint256 amount
+    ) public onlyOwner {
+        entryPoint().withdrawTo(withdrawAddress, amount);
+    }
+
+    function migrateCoinType(
+        uint256[] calldata _coinTypes
+    ) external notExpired {
+        for (uint256 i = 0; i < _coinTypes.length; ++i) {
+            addresses[_coinTypes[i]].addr = resolver.addr(node, _coinTypes[i]);
+        }
+    }
+
+    function updateNode(
+        uint256 coinType,
+        bytes calldata addr
+    ) external notExpired {
+        require(
+            msg.sender == address(resolver),
+            "only allow resolver to update "
+        );
+        addresses[coinType].addr = addr;
+    }
+
+    function validateUserOp(
+        UserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    )
+        external
+        virtual
+        override
+        onlyEntryPointOrOwner
+        returns (uint256 validationData)
+    {
+        validationData = _validateSignature(userOp, userOpHash);
+        _validateNonce(userOp.nonce);
+        _payPrefund(missingAccountFunds);
+    }
+
+    /**
+     * execute a transaction (called directly from owner, or by entryPoint)
+     */
+    function execute(
+        address dest,
+        uint256 value,
+        bytes calldata func
+    ) external onlyEntryPointOrOwner {
+        _call(dest, value, func);
+    }
+
+    /**
+     * execute a sequence of transactions
+     */
+    function executeBatch(
+        address[] calldata dest,
+        bytes[] calldata func
+    ) external onlyEntryPointOrOwner {
+        require(dest.length == func.length, "wrong array lengths");
+        for (uint256 i = 0; i < dest.length; i++) {
+            _call(dest[i], 0, func[i]);
+        }
+    }
+
     function _initialize(bytes32 _node) internal virtual {
-        (, , expiry) = nameWrapper.getData(uint256(_node));
         require(
             nameWrapper.allFusesBurned(
                 _node,
@@ -157,7 +228,6 @@ contract ENSAccount is
             ),
             "fuses restriction"
         );
-
         // only active eth address first
         bytes memory ethAddr = resolver.addr(_node, LibCoinType.COIN_TYPE_ETH);
         addresses[LibCoinType.COIN_TYPE_ETH] = AddressRecord({
@@ -171,6 +241,7 @@ contract ENSAccount is
         });
 
         node = _node;
+        (, , expiry) = nameWrapper.getData(uint256(_node));
         emit ENSAccountInitialized(
             _entryPoint,
             resolver,
@@ -179,25 +250,6 @@ contract ENSAccount is
             _bytesToAddress(ethAddr),
             expiry
         );
-    }
-
-    // Require the function call went through EntryPoint or owner
-    function _requireFromEntryPointOrOwner() internal view {
-        require(
-            msg.sender == address(entryPoint()) || msg.sender == getOwner(),
-            "account: not Owner or EntryPoint"
-        );
-    }
-
-    function validateUserOp(
-        UserOperation calldata userOp,
-        bytes32 userOpHash,
-        uint256 missingAccountFunds
-    ) external virtual override returns (uint256 validationData) {
-        _requireFromEntryPoint();
-        validationData = _validateSignature(userOp, userOpHash);
-        _validateNonce(userOp.nonce);
-        _payPrefund(missingAccountFunds);
     }
 
     /// implement template method of BaseAccount
@@ -235,32 +287,6 @@ contract ENSAccount is
         }
     }
 
-    /**
-     * check current account deposit in the entryPoint
-     */
-    function getDeposit() public view returns (uint256) {
-        return entryPoint().balanceOf(address(this));
-    }
-
-    /**
-     * deposit more funds for this account in the entryPoint
-     */
-    function addDeposit() public payable {
-        entryPoint().depositTo{value: msg.value}(address(this));
-    }
-
-    /**
-     * withdraw value from the account's deposit
-     * @param withdrawAddress target to send to
-     * @param amount to withdraw
-     */
-    function withdrawDepositTo(
-        address payable withdrawAddress,
-        uint256 amount
-    ) public onlyOwner {
-        entryPoint().withdrawTo(withdrawAddress, amount);
-    }
-
     function _authorizeUpgrade(
         address newImplementation
     ) internal view override {
@@ -275,11 +301,5 @@ contract ENSAccount is
         assembly {
             a := div(mload(add(b, 32)), exp(256, 12))
         }
-    }
-
-    function getSignMode(uint256 nonce) public pure returns (uint256) {
-        // Use coinType to indicate the sign mode
-        // TODO: extend other sign modes (e.g. multi signature of multi coinType)
-        return nonce == 0 ? LibCoinType.COIN_TYPE_ETH : (nonce >> 64);
     }
 }

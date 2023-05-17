@@ -38,15 +38,15 @@ contract ENSAccount is
         bytes addr;
     }
 
+    INameWrapper public immutable nameWrapper;
+    Resolver public immutable resolver;
+    IEntryPoint private immutable _entryPoint;
     bytes32 public node;
     // The expiry date of the domain, in seconds since the Unix epoch.
     uint64 public expiry;
     OwnerRecord public owner;
     // CoinType => AddressRecord
     mapping(uint256 => AddressRecord) public addresses;
-    INameWrapper public immutable nameWrapper;
-    Resolver public immutable resolver;
-    IEntryPoint private immutable _entryPoint;
 
     event ENSAccountInitialized(
         IEntryPoint indexed entryPoint,
@@ -72,20 +72,9 @@ contract ENSAccount is
     }
 
     modifier notExpired() {
-        require(block.timestamp <= expire, "expired domain");
+        require(block.timestamp <= expiry, "expired domain");
         _;
     }
-
-    function _onlyOwner() internal view {
-        //directly from EOA owner, or through the account itself (which gets redirected through execute())
-        require(
-            msg.sender == getOwner() || msg.sender == address(this),
-            "only owner"
-        );
-    }
-
-    // solhint-disable-next-line no-empty-blocks
-    receive() external payable {}
 
     constructor(
         IEntryPoint _ep,
@@ -98,69 +87,6 @@ contract ENSAccount is
         _disableInitializers();
     }
 
-    /**
-     * @dev The _entryPoint member is immutable, to reduce gas consumption.  To upgrade EntryPoint,
-     * a new implementation of ENSAccount must be deployed with the new EntryPoint address, then upgrading
-     * the implementation by calling `upgradeTo()`
-     */
-    function initialize(bytes32 _node) public virtual initializer {
-        _initialize(_node);
-    }
-
-    /// @inheritdoc BaseAccount
-    function entryPoint() public view virtual override returns (IEntryPoint) {
-        return _entryPoint;
-    }
-
-    function getOwner() public view notExpired returns (address) {
-        bytes memory addr = owner.addr;
-        return addr.length == 0 ? address(0) : _bytesToAddress(addr);
-    }
-
-    function getSignMode(uint256 nonce) public pure returns (uint256) {
-        // Use coinType to indicate the sign mode
-        // TODO: extend other sign modes (e.g. multi signature of multi coinType)
-        return nonce == 0 ? LibCoinType.COIN_TYPE_ETH : (nonce >> 64);
-    }
-
-    function updateExiry() public returns (uint64) {
-        require(
-            nameWrapper.allFusesBurned(
-                node,
-                PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_SET_RESOLVER
-            ),
-            "fuses restriction"
-        );
-        (, , expiry) = nameWrapper.getData(uint256(node));
-        return expiry;
-    }
-
-    /**
-     * check current account deposit in the entryPoint
-     */
-    function getDeposit() public view returns (uint256) {
-        return entryPoint().balanceOf(address(this));
-    }
-
-    /**
-     * deposit more funds for this account in the entryPoint
-     */
-    function addDeposit() public payable {
-        entryPoint().depositTo{value: msg.value}(address(this));
-    }
-
-    /**
-     * withdraw value from the account's deposit
-     * @param withdrawAddress target to send to
-     * @param amount to withdraw
-     */
-    function withdrawDepositTo(
-        address payable withdrawAddress,
-        uint256 amount
-    ) public onlyOwner {
-        entryPoint().withdrawTo(withdrawAddress, amount);
-    }
-
     function migrateCoinType(
         uint256[] calldata _coinTypes
     ) external notExpired {
@@ -168,6 +94,9 @@ contract ENSAccount is
             addresses[_coinTypes[i]].addr = resolver.addr(node, _coinTypes[i]);
         }
     }
+
+    // solhint-disable-next-line no-empty-blocks
+    receive() external payable {}
 
     function updateNode(
         uint256 coinType,
@@ -218,6 +147,69 @@ contract ENSAccount is
         for (uint256 i = 0; i < dest.length; i++) {
             _call(dest[i], 0, func[i]);
         }
+    }
+
+    /**
+     * @dev The _entryPoint member is immutable, to reduce gas consumption.  To upgrade EntryPoint,
+     * a new implementation of ENSAccount must be deployed with the new EntryPoint address, then upgrading
+     * the implementation by calling `upgradeTo()`
+     */
+    function initialize(bytes32 _node) public virtual initializer {
+        _initialize(_node);
+    }
+
+    function updateExiry() public returns (uint64) {
+        require(
+            nameWrapper.allFusesBurned(
+                node,
+                PARENT_CANNOT_CONTROL | CANNOT_UNWRAP | CANNOT_SET_RESOLVER
+            ),
+            "fuses restriction"
+        );
+        (, , expiry) = nameWrapper.getData(uint256(node));
+        return expiry;
+    }
+
+    /**
+     * deposit more funds for this account in the entryPoint
+     */
+    function addDeposit() public payable {
+        entryPoint().depositTo{value: msg.value}(address(this));
+    }
+
+    /**
+     * withdraw value from the account's deposit
+     * @param withdrawAddress target to send to
+     * @param amount to withdraw
+     */
+    function withdrawDepositTo(
+        address payable withdrawAddress,
+        uint256 amount
+    ) public onlyOwner {
+        entryPoint().withdrawTo(withdrawAddress, amount);
+    }
+
+    /// @inheritdoc BaseAccount
+    function entryPoint() public view virtual override returns (IEntryPoint) {
+        return _entryPoint;
+    }
+
+    function getOwner() public view notExpired returns (address) {
+        bytes memory addr = owner.addr;
+        return addr.length == 0 ? address(0) : _bytesToAddress(addr);
+    }
+
+    /**
+     * check current account deposit in the entryPoint
+     */
+    function getDeposit() public view returns (uint256) {
+        return entryPoint().balanceOf(address(this));
+    }
+
+    function getSignMode(uint256 nonce) public pure returns (uint256) {
+        // Use coinType to indicate the sign mode
+        // TODO: extend other sign modes (e.g. multi signature of multi coinType)
+        return nonce == 0 ? LibCoinType.COIN_TYPE_ETH : (nonce >> 64);
     }
 
     function _initialize(bytes32 _node) internal virtual {
@@ -285,6 +277,14 @@ contract ENSAccount is
                 revert(add(result, 32), mload(result))
             }
         }
+    }
+
+    function _onlyOwner() internal view {
+        //directly from EOA owner, or through the account itself (which gets redirected through execute())
+        require(
+            msg.sender == getOwner() || msg.sender == address(this),
+            "only owner"
+        );
     }
 
     function _authorizeUpgrade(

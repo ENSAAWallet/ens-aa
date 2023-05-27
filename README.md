@@ -1,5 +1,10 @@
 # ENSAA
 
+## Weekly Update
+This project has released [weekly updates](https://mirror.xyz/0x17451BE739C4B1554d408c91656D9f2091E99363) since 2023.05.22.
+
+## Why Choose ENS?
+
 ENS is a leading DID solution with the following characteristics.
 
 - Easy to remember and can be resolved into the blockchain address
@@ -12,6 +17,8 @@ ENS is a leading DID solution with the following characteristics.
 
 - [Namewrapper](https://ens.mirror.xyz/0M0fgqa6zw8M327TJk9VmGY__eorvLAKwUwrHEhc1MI) is an elegant permission mechanism and makes all ENS domains become ERC-1155 NFTs.
 
+## Why Introduce ENSAA?
+
 However, ENS domain are mainly used as DID for offchain domain resolution while onchain operations are based on the resolved address instead of the ENS domain. Therefore, the resolved address is the real onchain ID.
 
 Can we have a real ENS Ethereum account as our onchain ID?
@@ -20,7 +27,7 @@ Obviously, if account abstraction can be organically combined with ENS, then thi
 
 - The ENS domain becomes a real ID both offchain and onchain
 
-- Just reset the resolving address in the ENS APP, the account can be handed over automatically. Especially considering the features of SBT, EOA cannot achieve this. Also, ENS itself has a complete and flexible permission mechanism for setting the resolving address, which can meet the needs of the organizations.
+- Just transfer ownership in the ENS APP, the account can be handed over automatically. Especially considering the features of SBT, EOA cannot achieve this. Also, ENS itself has a complete and flexible permission mechanism for setting the resolving address, which can meet the needs of the organizations.
 
 - Since the ENS domain is a ERC-1155 NFT, you can manage your account by operating the NFT.
 
@@ -36,12 +43,17 @@ Obviously, if account abstraction can be organically combined with ENS, then thi
 
   - ENS also records social information (such as Twitter), providing the possibility of introducing social recovery and the keyless account.
 
+## Challenges
+
 Currently, ERC-4337 is a relatively mature account abstraction solution. At first glance, the developer only need to access ENS information during the ERC-4337 validation loop to achieve ENSAA's goals.
 
 However, in order to prevent bundlers from being attacked, [ERC-4337 restricts the account behavior during the ERC-4337 validation loop](https://eips.ethereum.org/EIPS/eip-4337#simulation). One of the constraints is that account validation can only access storage associated with the account. Due to the fact that ENS information is stored outside of the account, this approach becomes infeasible.
 
+
+## ENSAA Solution
 This project innovatively solved this problem and achieved ENSAA that meets the ERC-4337 specification.
 
+### V1 Solution
 The basic idea is as follows
 
 - ENS domain name uses custom `AAResolver` to record ENS information
@@ -54,4 +66,15 @@ However, forcing ENS domain to use custom `AAResolver` is not feasible. Once the
 
 Therefore, this project introduces the `fuses` mechanism of the ENS Namewrapper. When creating an `ENSAccount`, `ENSAccountFactory` will check the fuses of the ENS domain to ensure that once `ENSAccount` is deployed, the ENS domain cannot switch to other `Resolver`. Of course, the expiry of the ENS domain will also be considered to ensure the binding link of `ENSDomain <-> AAResolver <-> ENSAccount`.
 
-So, everything becomes wonderful again ~
+### V2 Solution
+To be continued ...
+
+### About [ERC-6551](https://eips.ethereum.org/EIPS/eip-6551)
+- The motivation of ERC-6551 is similar to ENSAA.
+
+- ERC-6551 cannot work properly under the framework of ERC-4337
+    - For account validation in ERC-4337 can only access storage associated with the account, invoking `ownerOf` method of ENS NFT is not allowed.
+
+- ENSAA is more closely integrated with ENS and tries to utilize the permission mechanism of ENS and the information binding to the ENS
+
+- ENSAA can support ERC-6551 in the same time.
